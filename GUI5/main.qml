@@ -3,8 +3,10 @@ import QtQuick.Controls 2.15
 
 ApplicationWindow {
     visible: true
-    width: 640
-    height: 480
+    title: "Avatar - Project"
+    width: 1500
+    height: 800
+
     Column {
         anchors.fill: parent
 
@@ -27,6 +29,9 @@ ApplicationWindow {
 
             TabButton {
                 text: "Brainwave Reading"
+                onClicked: {
+                    tabLoader.source = "BrainwaveReadingTab.qml"
+                }
             }
             TabButton {
                 text: "Manual Drone Control"
@@ -34,6 +39,11 @@ ApplicationWindow {
             TabButton {
                 text: "Transfer Data"
             }
+        }
+        Loader{
+            id: tabLoader
+            anchors.fill: parent
+            source: "BrainwaveReadingTab.qml"
         }
     }
 }
