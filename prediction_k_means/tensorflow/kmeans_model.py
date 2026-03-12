@@ -2,6 +2,8 @@ from typing import Any, Dict, Tuple
 import numpy as np
 import tensorflow as tf
 import pickle
+from scipy.signal import butter, sosfiltfilt  # welch only if you un-comment PSD code
+from scipy.stats import skew, kurtosis
 
 
 class KMeansTF:
@@ -48,21 +50,33 @@ class KMeansTF:
         
         return centers
 
-    def fit(self, X: np.ndarray, y: np.ndarray = None):
+    # kmeans_train.ipynb: call fit(X, y)  -- uses k-means++ init only
+    # kmeans_supervised_train.ipynb: call fit(X, y, init=init_centroids)  -- uses supervised init
+    def fit(self, X: np.ndarray, y: np.ndarray = None, init: np.ndarray = None):
         """
         Fit K-means clustering model.
-        
+
         Args:
             X: Training data of shape (n_samples, n_features)
             y: Optional labels for creating cluster-to-label mapping
+            init: Optional (n_clusters, n_features) initial centers (e.g. class means for supervised).
+                  If None, use k-means++ (for kmeans_train). If provided, use for kmeans_supervised_train.
         """
         X_tf = tf.convert_to_tensor(X, dtype=tf.float32)
         n_samples = tf.shape(X_tf)[0]
         n_features = tf.shape(X_tf)[1]
-        
-        # Initialize cluster centers
-        centers = self._initialize_centers(X_tf, n_samples)
-        
+
+        # Initialize cluster centers: supervised init (kmeans_supervised_train) or k-means++ (kmeans_train)
+        if init is not None:
+            init = np.asarray(init, dtype=np.float32)
+            if init.shape != (self.n_clusters, int(n_features.numpy())):
+                raise ValueError(
+                    f"init must have shape (n_clusters={self.n_clusters}, n_features={n_features.numpy()}), got {init.shape}"
+                )
+            centers = tf.convert_to_tensor(init, dtype=tf.float32)
+        else:
+            centers = self._initialize_centers(X_tf, n_samples)
+
         # K-means iteration
         for iteration in range(self.max_iter):
             # Assign each point to nearest cluster
@@ -233,3 +247,75 @@ def load_model(path: str) -> Tuple[KMeansTF, Dict[str, Any]]:
     m.inertia_ = payload['model'].get('inertia_', 0.0)
     
     return m, payload.get('meta', {})
+
+def apply_bandpass_to_signal(data, fs, lowcut=1.0, highcut=50.0):
+    """
+    Applies a 4th-order Butterworth filter to the whole signal.
+    Data should be (samples, channels).
+    """
+    if fs <= highcut * 2:  # Nyquist safety check
+        highcut = (fs / 2) - 1
+    
+    sos = butter(4, [lowcut, highcut], btype="band", fs=fs, output="sos")
+    # axis=0 filters along the time dimension for each channel
+    try:
+        return sosfiltfilt(sos, data, axis=0)
+    except ValueError:
+        # For very short segments, sosfiltfilt can fail if the time dimension
+        # is shorter than the required padding length. In that case, just
+        # return the input unfiltered so we don't crash the pipeline.
+        return data
+
+def get_hjorth_params(sig):
+    """Calculates Activity, Mobility, and Complexity."""
+    diff = np.diff(sig)
+    diff2 = np.diff(diff)
+    
+    var0 = np.var(sig)
+    var1 = np.var(diff)
+    var2 = np.var(diff2)
+    
+    if var0 == 0 or var1 == 0:
+        return 0.0, 0.0
+        
+    mobility = np.sqrt(var1 / var0)
+    complexity = (np.sqrt(var2 / var1)) / mobility
+    return mobility, complexity
+
+def extract_window_features(window_eeg, window_accel, fs):
+    """
+    Computes features for a single time window.
+    """
+    row_feats = []
+    
+    # 1. EEG Features per channel
+    for ch in range(window_eeg.shape[1]):
+        sig = window_eeg[:, ch]
+        
+        # Hjorth
+        mob, comp = get_hjorth_params(sig)
+        # Moments
+        sk = skew(sig)
+        kt = kurtosis(sig)
+        
+        # Optional: Uncomment if you want PSD bands back
+            # f, psd = welch(sig, file_fs, nperseg=win_size)
+
+            # # Frequency bands
+            # d = np.mean(psd[(f >= 0.5) & (f < 4)])
+            # t = np.mean(psd[(f >= 4) & (f < 8)])
+            # a = np.mean(psd[(f >= 8) & (f < 13)])
+            # b = np.mean(psd[(f >= 13) & (f < 30)])
+            # g_band = np.mean(psd[(f >= 30) & (f < 50)])
+
+            # total = d + t + a + b + g_band + 1e-12
+            # # Relative power in each band
+            # row_feats.extend([d / total, t / total, a / total, b / total, g_band / total])
+        
+        row_feats.extend([mob, comp, sk, kt])
+    
+    # 2. Accelerometer Features (Mean per axis)
+    if window_accel.size > 0:
+        row_feats.extend(np.mean(window_accel, axis=0).tolist())
+        
+    return row_feats
