@@ -100,7 +100,7 @@ class KMeansTF:
                 if count > 0:
                     new_centers = tf.tensor_scatter_nd_update(
                         new_centers,
-                        [[k]], #upddates cluster K's center
+                        [[k]],  # Updates cluster k's center
                         [tf.reduce_sum(X_tf * mask[:, tf.newaxis], axis=0) / count]
                     )
                 counts = tf.tensor_scatter_nd_update(counts, [[k]], [tf.cast(count, tf.int32)])
