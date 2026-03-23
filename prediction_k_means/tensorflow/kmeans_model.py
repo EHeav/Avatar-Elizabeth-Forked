@@ -10,6 +10,10 @@ class KMeansTF:
     """
     K-Means clustering implementation using TensorFlow.
     Can be used for classification by mapping clusters to class labels after training.
+    
+    USAGE: k_means_train_processed.ipynb cells 10-11
+      - Cell 10: model = KMeansTF(...); model.fit(X_train, y_train); model.predict(X_test)
+      - Cell 11: model.predict_proba(X_test) for confidence analysis
     """
     def __init__(self, n_clusters: int = 6, max_iter: int = 300, tol: float = 1e-4, random_state: int = 42):
         self.n_clusters = int(n_clusters)
@@ -23,7 +27,9 @@ class KMeansTF:
         self.inertia_ = None  # Sum of squared distances to nearest cluster center
 
     def _initialize_centers(self, X: tf.Tensor, n_samples: int) -> tf.Tensor:
-        """Initialize cluster centers using k-means++ initialization."""
+        """Initialize cluster centers using k-means++ initialization.
+        USAGE: Called internally by fit() when init=None (cell 10 indirect)
+        """
         tf.random.set_seed(self.random_state)
         n_features = tf.shape(X)[1]
         
@@ -50,11 +56,9 @@ class KMeansTF:
         
         return centers
 
-    # kmeans_train.ipynb: call fit(X, y)  -- uses k-means++ init only
-    # kmeans_supervised_train.ipynb: call fit(X, y, init=init_centroids)  -- uses supervised init
     def fit(self, X: np.ndarray, y: np.ndarray = None, init: np.ndarray = None):
         """
-        Fit K-means clustering model.
+        Fit K-means clustering model (USAGE: Cell 10 direct)
 
         Args:
             X: Training data of shape (n_samples, n_features)
@@ -63,8 +67,8 @@ class KMeansTF:
                   If None, use k-means++ (for kmeans_train). If provided, use for kmeans_supervised_train.
         """
         X_tf = tf.convert_to_tensor(X, dtype=tf.float32)
-        n_samples = tf.shape(X_tf)[0]
-        n_features = tf.shape(X_tf)[1]
+        n_samples = tf.shape(X_tf)[0] # Number of training windows
+        n_features = tf.shape(X_tf)[1] # Number of features per window (e.g. 14 EEG + 3 accel features)
 
         # Initialize cluster centers: supervised init (kmeans_supervised_train) or k-means++ (kmeans_train)
         if init is not None:
@@ -96,7 +100,7 @@ class KMeansTF:
                 if count > 0:
                     new_centers = tf.tensor_scatter_nd_update(
                         new_centers,
-                        [[k]],
+                        [[k]], #upddates cluster K's center
                         [tf.reduce_sum(X_tf * mask[:, tf.newaxis], axis=0) / count]
                     )
                 counts = tf.tensor_scatter_nd_update(counts, [[k]], [tf.cast(count, tf.int32)])
@@ -128,7 +132,9 @@ class KMeansTF:
         return self
 
     def _create_cluster_label_map(self, y: np.ndarray):
-        """Map each cluster to the most common label in that cluster."""
+        """Map each cluster to the most common label in that cluster.
+        USAGE: Called by fit() when y is provided (cell 10 indirect)
+        """
         cluster_to_label = {}
         for k in range(self.n_clusters):
             mask = self.labels_ == k
@@ -145,7 +151,7 @@ class KMeansTF:
 
     def predict(self, X: np.ndarray) -> np.ndarray:
         """
-        Predict cluster assignments for new data.
+        Predict cluster assignments for new data (USAGE: Cell 10 direct).
         If cluster_to_label_map_ exists, returns class labels instead of cluster indices.
         
         Args:
@@ -177,7 +183,7 @@ class KMeansTF:
 
     def predict_proba(self, X: np.ndarray) -> np.ndarray:
         """
-        Predict class probabilities based on distance to cluster centers.
+        Predict class probabilities based on distance to cluster centers (USAGE: Cell 11 direct).
         Uses softmax of negative distances as probabilities.
         
         Args:
@@ -219,7 +225,9 @@ class KMeansTF:
 
 
 def save_model(path: str, model: KMeansTF, meta: Dict[str, Any]) -> None:
-    """Save K-means model and metadata to file."""
+    """Save K-means model and metadata to file (USAGE: Cell 12 direct).
+    Saves pickled cluster centers, label mapping, and preprocessing stats (mu, sd).
+    """
     payload: Dict[str, Any] = {
         'model': {
             'n_clusters': int(model.n_clusters),
@@ -236,7 +244,9 @@ def save_model(path: str, model: KMeansTF, meta: Dict[str, Any]) -> None:
 
 
 def load_model(path: str) -> Tuple[KMeansTF, Dict[str, Any]]:
-    """Load K-means model and metadata from file."""
+    """Load K-means model and metadata from file (NOT USED in current notebook).
+    Use for inference workflows to load saved models and make predictions on new EEG data.
+    """
     with open(path, 'rb') as f:
         payload = pickle.load(f)
     
@@ -250,8 +260,8 @@ def load_model(path: str) -> Tuple[KMeansTF, Dict[str, Any]]:
 
 def apply_bandpass_to_signal(data, fs, lowcut=1.0, highcut=50.0):
     """
-    Applies a 4th-order Butterworth filter to the whole signal.
-    Data should be (samples, channels).
+    Applies a 4th-order Butterworth filter to the whole signal (USAGE: Cell 8 direct).
+    Data should be (samples, channels). Filters 1-50 Hz band per-file before windowing.
     """
     if fs <= highcut * 2:  # Nyquist safety check
         highcut = (fs / 2) - 1
@@ -267,7 +277,9 @@ def apply_bandpass_to_signal(data, fs, lowcut=1.0, highcut=50.0):
         return data
 
 def get_hjorth_params(sig):
-    """Calculates Activity, Mobility, and Complexity."""
+    """Calculates Hjorth Mobility and Complexity temporal features.
+    USAGE: Called by extract_window_features() for each EEG channel (cell 8 indirect)
+    """
     diff = np.diff(sig)
     diff2 = np.diff(diff)
     
@@ -284,7 +296,8 @@ def get_hjorth_params(sig):
 
 def extract_window_features(window_eeg, window_accel, fs):
     """
-    Computes features for a single time window.
+    Computes features for a single 1-second time window (USAGE: Cell 8 direct).
+    Per-channel: Hjorth (mobility, complexity) + skewness + kurtosis + accel means.
     """
     row_feats = []
     
